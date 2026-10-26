@@ -1,0 +1,29 @@
+openapi: 3.0.3
+info:
+  title: SERVI·RED — Servicio Moderación
+  version: 0.1.0
+  description: |
+    Contrato del servicio Moderación (puerto 8082, solo red interna). Expone únicamente
+    `POST /api/fraudes`, tomado de `servired-public.yaml`.
+
+    **Anonimato:** Moderación nunca recibe ni guarda identidad del usuario. El gateway elimina los
+    headers de identidad, la IP del cliente y cualquier identificador de dispositivo antes de
+    reenviar la petición.
+
+    Dependencias síncronas (timeout `SYNC_TIMEOUT_MS`=2000, 1 reintento; si fallan, el resultado
+    es `PENDIENTE_REVISION`):
+    - Reportes: `GET /internal/reportes/{id}` (ver `reportes.yaml`).
+    - Indicadores: `GET /internal/indicadores/patrones` (ver `indicadores.yaml`).
+  contact:
+    name: Equipo SERVI·RED
+    url: https://github.com/ProyectoArquisoft/servired-infra
+servers:
+  - url: http://moderacion:8082
+    description: Red interna de docker compose
+tags:
+  - name: Fraudes
+    description: Reportes anónimos de conexiones fraudulentas.
+
+paths:
+  /api/fraudes:
+    $ref: 'servired-public.yaml#/paths/~1api~1fraudes'

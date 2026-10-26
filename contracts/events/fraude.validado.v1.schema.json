@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/ProyectoArquisoft/servired-infra/contracts/events/fraude.validado.v1.schema.json",
+  "title": "Evento fraude.validado v1",
+  "description": "Publicado por Moderación al aprobar un reporte de fraude. NO contiene ningún dato de usuario (additionalProperties=false lo garantiza). Lo consume Indicadores.",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "fraude.validado"
+        },
+        "version": {
+          "const": 1
+        },
+        "source": {
+          "const": "moderacion"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "idFraude",
+            "idServicio",
+            "lat",
+            "lng",
+            "fecha"
+          ],
+          "properties": {
+            "idFraude": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "idServicio": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "lat": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "lng": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            },
+            "fecha": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

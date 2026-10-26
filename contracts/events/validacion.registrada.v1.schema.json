@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/ProyectoArquisoft/servired-infra/contracts/events/validacion.registrada.v1.schema.json",
+  "title": "Evento validacion.registrada v1",
+  "description": "Publicado por Reportes al registrar una validación comunitaria. Lo consume Indicadores.",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "validacion.registrada"
+        },
+        "version": {
+          "const": 1
+        },
+        "source": {
+          "const": "reportes"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "idReporte",
+            "totalValidaciones"
+          ],
+          "properties": {
+            "idReporte": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "totalValidaciones": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    }
+  ]
+}

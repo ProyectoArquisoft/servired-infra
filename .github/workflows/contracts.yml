@@ -1,0 +1,47 @@
+name: contracts
+
+on:
+  pull_request:
+    paths: ["contracts/**", ".spectral.yaml", ".github/workflows/contracts.yml"]
+  push:
+    branches: [main]
+    paths: ["contracts/**", ".spectral.yaml", ".github/workflows/contracts.yml"]
+
+jobs:
+  openapi:
+    name: Lint OpenAPI (Spectral)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npx -y @stoplight/spectral-cli@6.15.0 lint "contracts/openapi/*.yaml" --fail-severity=warn
+
+  events:
+    name: Validar eventos (ajv)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/events
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Los ejemplos válidos cumplen su esquema
+        run: |
+          for ex in examples/*.example.json; do
+            evento=$(basename "$ex" .example.json)
+            npx -y -p ajv-cli@5.0.0 -p ajv-formats@3.0.1 ajv validate --spec=draft7 --strict=false -c ajv-formats \
+              -s "$evento.v1.schema.json" -r envelope.schema.json -d "$ex"
+          done
+      - name: Los ejemplos inválidos son rechazados (p. ej. fraude con datos de usuario)
+        run: |
+          for ex in examples/invalid/*.json; do
+            evento=$(basename "$ex" | cut -d. -f1-2)
+            if npx -y -p ajv-cli@5.0.0 -p ajv-formats@3.0.1 ajv validate --spec=draft7 --strict=false -c ajv-formats \
+                 -s "$evento.v1.schema.json" -r envelope.schema.json -d "$ex"; then
+              echo "::error file=contracts/events/$ex::debería ser inválido"; exit 1
+            fi
+          done

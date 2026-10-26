@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/ProyectoArquisoft/servired-infra/contracts/events/envelope.schema.json",
+  "title": "Sobre común de eventos SERVI·RED",
+  "description": "Todo mensaje publicado en el exchange `servired.events` usa este sobre. La routing key es igual a `type`. Los consumidores deben ser idempotentes por `eventId`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventId",
+    "type",
+    "version",
+    "occurredAt",
+    "source",
+    "correlationId",
+    "data"
+  ],
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Identificador único del evento (llave de idempotencia del consumidor)."
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "reporte.creado",
+        "reporte.restablecido",
+        "validacion.registrada",
+        "fraude.validado",
+        "fraude.rechazado"
+      ]
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Versión del esquema de `data`."
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Momento del hecho, ISO-8601 UTC."
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "reportes",
+        "moderacion",
+        "indicadores"
+      ],
+      "description": "Servicio que publica."
+    },
+    "correlationId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Correlación con la petición HTTP de origen (trazas)."
+    },
+    "data": {
+      "type": "object"
+    }
+  }
+}

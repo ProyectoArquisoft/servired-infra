@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/ProyectoArquisoft/servired-infra/contracts/events/reporte.creado.v1.schema.json",
+  "title": "Evento reporte.creado v1",
+  "description": "Publicado por Reportes al crear un reporte de corte. Lo consume Indicadores.",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "reporte.creado"
+        },
+        "version": {
+          "const": 1
+        },
+        "source": {
+          "const": "reportes"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "idReporte",
+            "codigoTrazabilidad",
+            "idServicio",
+            "tipoServicio",
+            "severidad",
+            "departamento",
+            "municipio",
+            "lat",
+            "lng",
+            "fechaCreacion"
+          ],
+          "properties": {
+            "idReporte": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "codigoTrazabilidad": {
+              "type": "string",
+              "minLength": 1
+            },
+            "idServicio": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "tipoServicio": {
+              "type": "string",
+              "enum": [
+                "ENERGIA",
+                "GAS",
+                "ACUEDUCTO",
+                "ALCANTARILLADO",
+                "ASEO"
+              ]
+            },
+            "severidad": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                "BAJA",
+                "MEDIA",
+                "ALTA",
+                null
+              ]
+            },
+            "departamento": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "municipio": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lat": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "lng": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            },
+            "fechaCreacion": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

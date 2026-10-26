@@ -1,0 +1,13 @@
+# Secretos: nunca commitear
+.env
+*.env
+!.env.example
+
+# Node (herramientas de validación ejecutadas con npx)
+node_modules/
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

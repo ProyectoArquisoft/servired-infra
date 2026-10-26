@@ -1,0 +1,935 @@
+openapi: 3.0.3
+info:
+  title: SERVI·RED — API pública
+  version: 0.1.0
+  description: |
+    API pública de SERVI·RED expuesta por el gateway (puerto 8080). Es el contrato que usa la app
+    móvil y el que sirve el mock (Prism, puerto 4010).
+
+    Convenciones:
+    - JSON en camelCase; fechas ISO-8601 en UTC; coordenadas `lat`/`lng` en WGS84.
+    - Errores en formato RFC 7807 (`application/problem+json`).
+    - Paginación con `page` (desde 0) y `size`; respuesta `{ items, page, size, total }`.
+    - Autenticación: `Authorization: Bearer <JWT de Supabase>`. El rol viaja en el claim
+      `app_metadata.rol` ∈ `CIUDADANO | OPERADOR | REGULADOR`. El rol exigido por cada operación
+      se indica en su descripción y en la extensión `x-roles`.
+    - Los POST que crean recursos desde la app aceptan `Idempotency-Key` (UUID del cliente): un
+      reintento con la misma llave devuelve el mismo resultado sin duplicar.
+  contact:
+    name: Equipo SERVI·RED
+    url: https://github.com/ProyectoArquisoft/servired-infra
+  license:
+    name: CC BY 4.0 (datos abiertos)
+    url: https://creativecommons.org/licenses/by/4.0/
+servers:
+  - url: http://localhost:8080
+    description: Gateway local (docker compose)
+  - url: http://localhost:4010
+    description: Mock (Prism, perfil `mock`)
+tags:
+  - name: Servicios
+    description: Catálogo de servicios públicos domiciliarios.
+  - name: Reportes
+    description: Reportes de corte, restablecimiento y validación comunitaria (servicio Reportes).
+  - name: Fraudes
+    description: Reportes anónimos de conexiones fraudulentas (servicio Moderación).
+  - name: Indicadores
+    description: Indicadores de continuidad y datos abiertos (servicio Indicadores).
+security:
+  - bearerAuth: []
+
+paths:
+  /api/servicios:
+    get:
+      tags: [Servicios]
+      operationId: listarServicios
+      summary: Catálogo de tipos de servicio
+      description: Lista los servicios para que la app arme el selector. Pública.
+      security: []
+      x-roles: []
+      responses:
+        '200':
+          description: Catálogo de servicios.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Servicio'
+              example:
+                - { idServicio: 1, tipo: ENERGIA, descripcion: Energía eléctrica }
+                - { idServicio: 2, tipo: GAS, descripcion: Gas natural / gas licuado }
+                - { idServicio: 3, tipo: ACUEDUCTO, descripcion: Acueducto (agua potable) }
+                - { idServicio: 4, tipo: ALCANTARILLADO, descripcion: Alcantarillado }
+                - { idServicio: 5, tipo: ASEO, descripcion: Recolección de basuras y residuos }
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+
+  /api/reportes:
+    post:
+      tags: [Reportes]
+      operationId: crearReporte
+      summary: Reportar un corte no programado (RF1)
+      description: |
+        Crea un reporte de corte con geolocalización y evidencia opcional. Rol: CIUDADANO.
+        Publica el evento `reporte.creado`.
+      x-roles: [CIUDADANO]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyRequerida'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/NuevoReporte'
+            encoding:
+              evidencia:
+                contentType: image/jpeg
+      responses:
+        '201':
+          description: Reporte creado (o el mismo reporte si se reintentó con la misma `Idempotency-Key`).
+          headers:
+            Location:
+              description: URL del reporte creado.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reporte'
+              examples:
+                reporteActivo:
+                  $ref: '#/components/examples/ReporteActivo'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '413':
+          $ref: '#/components/responses/EvidenciaMuyGrande'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+    get:
+      tags: [Reportes]
+      operationId: listarReportes
+      summary: Consultar reportes (RF6)
+      description: |
+        Lista paginada de reportes con filtros geográficos y de estado. Rol: CIUDADANO u OPERADOR.
+        No incluye la URL de evidencia (solo el detalle la entrega).
+      x-roles: [CIUDADANO, OPERADOR]
+      parameters:
+        - name: bbox
+          in: query
+          description: 'Rectángulo `minLng,minLat,maxLng,maxLat` (WGS84).'
+          schema:
+            type: string
+            pattern: '^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$'
+          example: '-74.20,4.55,-74.00,4.75'
+        - name: estado
+          in: query
+          schema:
+            $ref: '#/components/schemas/EstadoReporte'
+        - name: idServicio
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: mios
+          in: query
+          description: Si es `true`, solo los reportes creados por el usuario del JWT.
+          schema: { type: boolean, default: false }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Página de reportes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginaReportes'
+              example:
+                items:
+                  - idReporte: 1024
+                    codigoTrazabilidad: SR-2026-000124
+                    idServicio: 1
+                    tipoServicio: ENERGIA
+                    tipoEvento: CORTE
+                    estado: ACTIVO
+                    severidad: ALTA
+                    departamento: Cundinamarca
+                    municipio: Bogotá D.C.
+                    lat: 4.6097
+                    lng: -74.0817
+                    fechaCreacion: '2026-10-26T13:05:00Z'
+                    fechaResolucion: null
+                    totalValidaciones: 0
+                  - idReporte: 1019
+                    codigoTrazabilidad: SR-2026-000119
+                    idServicio: 3
+                    tipoServicio: ACUEDUCTO
+                    tipoEvento: CORTE
+                    estado: RESTABLECIDO
+                    severidad: MEDIA
+                    departamento: Cundinamarca
+                    municipio: Bogotá D.C.
+                    lat: 4.6352
+                    lng: -74.0703
+                    fechaCreacion: '2026-10-25T08:00:00Z'
+                    fechaResolucion: '2026-10-25T14:30:00Z'
+                    totalValidaciones: 3
+                page: 0
+                size: 20
+                total: 2
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+
+  /api/reportes/{id}:
+    get:
+      tags: [Reportes]
+      operationId: obtenerReporte
+      summary: Detalle de un reporte
+      description: Detalle con URL firmada de la evidencia (caduca). Rol CIUDADANO u OPERADOR.
+      x-roles: [CIUDADANO, OPERADOR]
+      parameters:
+        - $ref: '#/components/parameters/IdReporte'
+      responses:
+        '200':
+          description: Reporte.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reporte'
+              examples:
+                reporteActivo:
+                  $ref: '#/components/examples/ReporteActivo'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+
+  /api/reportes/{id}/restablecimiento:
+    post:
+      tags: [Reportes]
+      operationId: notificarRestablecimiento
+      summary: Notificar que el servicio volvió (RF2)
+      description: |
+        Marca el reporte como `RESTABLECIMIENTO_REPORTADO`. Queda pendiente de validación
+        comunitaria; cuando se alcanzan las validaciones requeridas pasa a `RESTABLECIDO`, se calcula
+        la duración de la interrupción y se publica `reporte.restablecido`. Rol: CIUDADANO.
+      x-roles: [CIUDADANO]
+      parameters:
+        - $ref: '#/components/parameters/IdReporte'
+        - $ref: '#/components/parameters/IdempotencyKeyRequerida'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NuevoRestablecimiento'
+      responses:
+        '200':
+          description: Reporte actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reporte'
+              examples:
+                reporteRestablecimientoReportado:
+                  $ref: '#/components/examples/ReporteRestablecimientoReportado'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '409':
+          $ref: '#/components/responses/Conflicto'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+
+  /api/reportes/{id}/validaciones:
+    post:
+      tags: [Reportes]
+      operationId: validarRestablecimiento
+      summary: Confirmar un restablecimiento (RF3)
+      description: |
+        Otro ciudadano cercano confirma el restablecimiento. La ubicación del validador se compara
+        con la del reporte (radio propuesto: 500 m). Publica `validacion.registrada`.
+        `409` si el usuario ya validó este reporte o si es su autor. Rol: CIUDADANO.
+      x-roles: [CIUDADANO]
+      parameters:
+        - $ref: '#/components/parameters/IdReporte'
+        - $ref: '#/components/parameters/IdempotencyKeyOpcional'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NuevaValidacion'
+            example: { lat: 4.6101, lng: -74.0820 }
+      responses:
+        '201':
+          description: Validación registrada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Validacion'
+              example:
+                idValidacion: 77
+                idReporte: 1024
+                fecha: '2026-10-26T16:40:00Z'
+                totalValidaciones: 1
+                validacionesRequeridas: 3
+                estadoReporte: RESTABLECIMIENTO_REPORTADO
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '409':
+          $ref: '#/components/responses/Conflicto'
+        '422':
+          $ref: '#/components/responses/FueraDeRadio'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+
+  /api/reportes/{id}/estado:
+    patch:
+      tags: [Reportes]
+      operationId: cambiarEstadoReporte
+      summary: Gestionar o cerrar un reporte (RF7)
+      description: |
+        El operador cambia el estado del reporte (p. ej. `EN_ATENCION` o `CERRADO`).
+        `409` si la transición no es válida. Rol: OPERADOR.
+      x-roles: [OPERADOR]
+      parameters:
+        - $ref: '#/components/parameters/IdReporte'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CambioEstado'
+            example:
+              estado: EN_ATENCION
+              idOperador: 3
+              justificacion: Cuadrilla asignada al sector.
+      responses:
+        '200':
+          description: Reporte actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reporte'
+              examples:
+                reporteEnAtencion:
+                  $ref: '#/components/examples/ReporteEnAtencion'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '409':
+          $ref: '#/components/responses/Conflicto'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+
+  /api/fraudes:
+    post:
+      tags: [Fraudes]
+      operationId: reportarFraude
+      summary: Reporte anónimo de conexión fraudulenta (RF4/RF5)
+      description: |
+        **Sin autenticación.** El gateway no valida JWT en esta ruta y no reenvía a Moderación
+        ningún header de identidad, IP del cliente ni identificador de dispositivo. La tasa se
+        limita por IP en el gateway, sin persistir la IP en ningún servicio de negocio.
+
+        La respuesta es síncrona. Si alguna consulta síncrona de Moderación (a Reportes o a
+        Indicadores) falla por timeout, el resultado es `PENDIENTE_REVISION`.
+        Publica `fraude.validado` o `fraude.rechazado`.
+      security: []
+      x-roles: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyOpcional'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NuevoFraude'
+            example:
+              idServicio: 1
+              lat: 4.5981
+              lng: -74.0758
+              descripcion: Conexión directa al poste sin medidor en la esquina de la cuadra.
+              idReporteRef: null
+      responses:
+        '201':
+          description: Fraude recibido y evaluado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoFraude'
+              example:
+                idFraude: 58
+                resultado: APROBADO
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '429':
+          $ref: '#/components/responses/DemasiadasSolicitudes'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+
+  /api/indicadores:
+    get:
+      tags: [Indicadores]
+      operationId: consultarIndicadores
+      summary: Indicadores de continuidad (RF9)
+      description: Indicadores agregados por servicio, zona y periodo. Pública.
+      security: []
+      x-roles: []
+      parameters:
+        - name: idServicio
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: departamento
+          in: query
+          schema: { type: string }
+          example: Cundinamarca
+        - name: municipio
+          in: query
+          schema: { type: string }
+          example: Bogotá D.C.
+        - $ref: '#/components/parameters/Periodo'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Página de indicadores.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginaIndicadores'
+              example:
+                items:
+                  - idIndicador: 301
+                    idServicio: 1
+                    tipoServicio: ENERGIA
+                    tipoNovedad: CORTE
+                    departamento: Cundinamarca
+                    municipio: Bogotá D.C.
+                    periodo: '2026-10'
+                    horasInterrupcionProm: 3.25
+                    frecuenciaCortes: 12
+                  - idIndicador: 302
+                    idServicio: 3
+                    tipoServicio: ACUEDUCTO
+                    tipoNovedad: CORTE
+                    departamento: Cundinamarca
+                    municipio: Bogotá D.C.
+                    periodo: '2026-10'
+                    horasInterrupcionProm: 6.5
+                    frecuenciaCortes: 4
+                page: 0
+                size: 20
+                total: 2
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+
+  /api/indicadores/export:
+    get:
+      tags: [Indicadores]
+      operationId: exportarIndicadores
+      summary: Exportar indicadores (RF8)
+      description: Exportación para cumplimiento regulatorio (SSPD / CRA). Rol OPERADOR o REGULADOR.
+      x-roles: [OPERADOR, REGULADOR]
+      parameters:
+        - name: formato
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [csv, json]
+        - name: idServicio
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: departamento
+          in: query
+          schema: { type: string }
+        - name: municipio
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/Periodo'
+      responses:
+        '200':
+          description: Archivo con los indicadores filtrados.
+          headers:
+            Content-Disposition:
+              description: 'Nombre sugerido del archivo, p. ej. `attachment; filename="indicadores-2026-10.csv"`.'
+              schema: { type: string }
+          content:
+            text/csv:
+              schema:
+                type: string
+              example: |
+                idIndicador,idServicio,tipoServicio,tipoNovedad,departamento,municipio,periodo,horasInterrupcionProm,frecuenciaCortes
+                301,1,ENERGIA,CORTE,Cundinamarca,Bogotá D.C.,2026-10,3.25,12
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IndicadorAgregado'
+              example:
+                - idIndicador: 301
+                  idServicio: 1
+                  tipoServicio: ENERGIA
+                  tipoNovedad: CORTE
+                  departamento: Cundinamarca
+                  municipio: Bogotá D.C.
+                  periodo: '2026-10'
+                  horasInterrupcionProm: 3.25
+                  frecuenciaCortes: 12
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '500':
+          $ref: '#/components/responses/ErrorInterno'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT emitido por Supabase Auth. Rol en `app_metadata.rol`.
+
+  parameters:
+    IdReporte:
+      name: id
+      in: path
+      required: true
+      description: '`idReporte` del reporte.'
+      schema: { type: integer, format: int64 }
+      example: 1024
+    IdempotencyKeyRequerida:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID generado por el cliente. Un reintento con la misma llave no duplica.
+      schema: { type: string, format: uuid }
+      example: 3f1c2a9e-7b4d-4c2e-9a51-0d8e6f4b1a77
+    IdempotencyKeyOpcional:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: UUID aleatorio por petición. En `/api/fraudes` no debe tener relación con ninguna cuenta.
+      schema: { type: string, format: uuid }
+      example: 9b2d4e61-1c3a-4f7b-8e0d-5a6c7b8d9e0f
+    Page:
+      name: page
+      in: query
+      description: Número de página, desde 0.
+      schema: { type: integer, minimum: 0, default: 0 }
+    Size:
+      name: size
+      in: query
+      description: Tamaño de página.
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Periodo:
+      name: periodo
+      in: query
+      description: Periodo mensual `YYYY-MM`.
+      schema:
+        type: string
+        pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+      example: '2026-10'
+
+  schemas:
+    TipoServicio:
+      type: string
+      enum: [ENERGIA, GAS, ACUEDUCTO, ALCANTARILLADO, ASEO]
+    EstadoReporte:
+      type: string
+      description: |
+        - `ACTIVO`: corte reportado.
+        - `EN_ATENCION`: un operador lo está gestionando.
+        - `RESTABLECIMIENTO_REPORTADO`: un ciudadano notificó el restablecimiento; pendiente de validación comunitaria.
+        - `RESTABLECIDO`: restablecimiento confirmado; duración calculada.
+        - `CERRADO`: cerrado por el operador.
+      enum: [ACTIVO, EN_ATENCION, RESTABLECIMIENTO_REPORTADO, RESTABLECIDO, CERRADO]
+    Severidad:
+      type: string
+      enum: [BAJA, MEDIA, ALTA]
+    MagnitudArea:
+      type: string
+      description: Magnitud estimada del área afectada.
+      enum: [VIVIENDA, CUADRA, BARRIO, SECTOR]
+
+    Servicio:
+      type: object
+      required: [idServicio, tipo, descripcion]
+      properties:
+        idServicio: { type: integer, format: int64 }
+        tipo: { $ref: '#/components/schemas/TipoServicio' }
+        descripcion: { type: string }
+
+    NuevoReporte:
+      type: object
+      required: [idServicio, tipoEvento, lat, lng]
+      properties:
+        idServicio: { type: integer, format: int64 }
+        tipoEvento:
+          type: string
+          enum: [CORTE]
+        lat: { type: number, format: double, minimum: -90, maximum: 90 }
+        lng: { type: number, format: double, minimum: -180, maximum: 180 }
+        descripcion: { type: string, maxLength: 1000 }
+        severidad: { $ref: '#/components/schemas/Severidad' }
+        magnitudAreaAfectada: { $ref: '#/components/schemas/MagnitudArea' }
+        tiempoInicioEstimado:
+          type: string
+          format: date-time
+          description: Momento estimado en que empezó el corte (UTC).
+        evidencia:
+          type: string
+          format: binary
+          description: Fotografía JPEG de máximo 2 MB.
+
+    ReporteResumen:
+      type: object
+      required: [idReporte, codigoTrazabilidad, idServicio, tipoServicio, tipoEvento, estado, lat, lng, fechaCreacion, totalValidaciones]
+      properties:
+        idReporte: { type: integer, format: int64 }
+        codigoTrazabilidad:
+          type: string
+          description: Código que ve el ciudadano para hacer seguimiento.
+          example: SR-2026-000124
+        idServicio: { type: integer, format: int64 }
+        tipoServicio: { $ref: '#/components/schemas/TipoServicio' }
+        tipoEvento:
+          type: string
+          enum: [CORTE]
+        estado: { $ref: '#/components/schemas/EstadoReporte' }
+        severidad: { $ref: '#/components/schemas/Severidad' }
+        departamento: { type: string, nullable: true }
+        municipio: { type: string, nullable: true }
+        lat: { type: number, format: double }
+        lng: { type: number, format: double }
+        fechaCreacion: { type: string, format: date-time }
+        fechaResolucion: { type: string, format: date-time, nullable: true }
+        totalValidaciones: { type: integer, minimum: 0 }
+
+    Reporte:
+      allOf:
+        - $ref: '#/components/schemas/ReporteResumen'
+        - type: object
+          properties:
+            descripcion: { type: string, nullable: true }
+            magnitudAreaAfectada:
+              # Mismos valores que MagnitudArea; inline porque OAS 3.0 no permite nullable con $ref.
+              type: string
+              nullable: true
+              enum: [VIVIENDA, CUADRA, BARRIO, SECTOR, null]
+            tiempoInicioEstimado: { type: string, format: date-time, nullable: true }
+            duracionInterrupcionHoras:
+              type: number
+              format: double
+              nullable: true
+              description: Calculada al pasar a `RESTABLECIDO`.
+            idOperador: { type: integer, format: int64, nullable: true }
+            evidenciaUrl:
+              type: string
+              format: uri
+              nullable: true
+              description: URL firmada de la evidencia; caduca (≈1 h). Solo en el detalle.
+            esMio:
+              type: boolean
+              description: '`true` si el reporte lo creó el usuario del JWT.'
+
+    PaginaReportes:
+      type: object
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ReporteResumen' }
+        page: { type: integer, minimum: 0 }
+        size: { type: integer, minimum: 1 }
+        total: { type: integer, format: int64, minimum: 0 }
+
+    NuevoRestablecimiento:
+      type: object
+      properties:
+        fechaRestablecimiento:
+          type: string
+          format: date-time
+          description: Momento en que volvió el servicio. Por defecto, la hora de la petición.
+        lat: { type: number, format: double, minimum: -90, maximum: 90 }
+        lng: { type: number, format: double, minimum: -180, maximum: 180 }
+
+    NuevaValidacion:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat: { type: number, format: double, minimum: -90, maximum: 90 }
+        lng: { type: number, format: double, minimum: -180, maximum: 180 }
+
+    Validacion:
+      type: object
+      required: [idValidacion, idReporte, fecha, totalValidaciones, validacionesRequeridas, estadoReporte]
+      properties:
+        idValidacion: { type: integer, format: int64 }
+        idReporte: { type: integer, format: int64 }
+        fecha: { type: string, format: date-time }
+        totalValidaciones: { type: integer, minimum: 0 }
+        validacionesRequeridas: { type: integer, minimum: 1 }
+        estadoReporte: { $ref: '#/components/schemas/EstadoReporte' }
+
+    CambioEstado:
+      type: object
+      required: [estado]
+      properties:
+        estado:
+          type: string
+          enum: [EN_ATENCION, CERRADO]
+        idOperador: { type: integer, format: int64 }
+        justificacion: { type: string, maxLength: 1000 }
+
+    NuevoFraude:
+      type: object
+      additionalProperties: false
+      required: [idServicio, lat, lng, descripcion]
+      properties:
+        idServicio: { type: integer, format: int64 }
+        lat: { type: number, format: double, minimum: -90, maximum: 90 }
+        lng: { type: number, format: double, minimum: -180, maximum: 180 }
+        descripcion: { type: string, minLength: 1, maxLength: 1000 }
+        idReporteRef:
+          type: integer
+          format: int64
+          nullable: true
+          description: Reporte de corte relacionado, si existe.
+
+    ResultadoFraude:
+      type: object
+      required: [idFraude, resultado]
+      properties:
+        idFraude: { type: integer, format: int64 }
+        resultado:
+          type: string
+          enum: [APROBADO, RECHAZADO, PENDIENTE_REVISION]
+
+    IndicadorAgregado:
+      type: object
+      required: [idIndicador, tipoServicio, tipoNovedad, departamento, municipio, periodo]
+      properties:
+        idIndicador: { type: integer, format: int64 }
+        idServicio: { type: integer, format: int64 }
+        tipoServicio: { $ref: '#/components/schemas/TipoServicio' }
+        tipoNovedad:
+          type: string
+          enum: [CORTE, FRAUDE]
+        departamento: { type: string }
+        municipio: { type: string }
+        periodo:
+          type: string
+          pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+        horasInterrupcionProm: { type: number, format: double, nullable: true }
+        frecuenciaCortes: { type: integer, minimum: 0 }
+
+    PaginaIndicadores:
+      type: object
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/IndicadorAgregado' }
+        page: { type: integer, minimum: 0 }
+        size: { type: integer, minimum: 1 }
+        total: { type: integer, format: int64, minimum: 0 }
+
+    Problema:
+      type: object
+      description: Error RFC 7807.
+      required: [type, title, status]
+      properties:
+        type: { type: string, format: uri-reference, default: about:blank }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string, format: uri-reference }
+        errores:
+          type: array
+          description: Errores de validación por campo (extensión).
+          items:
+            type: object
+            required: [campo, mensaje]
+            properties:
+              campo: { type: string }
+              mensaje: { type: string }
+
+  examples:
+    ReporteActivo:
+      value:
+        idReporte: 1024
+        codigoTrazabilidad: SR-2026-000124
+        idServicio: 1
+        tipoServicio: ENERGIA
+        tipoEvento: CORTE
+        estado: ACTIVO
+        severidad: ALTA
+        departamento: Cundinamarca
+        municipio: Bogotá D.C.
+        lat: 4.6097
+        lng: -74.0817
+        fechaCreacion: '2026-10-26T13:05:00Z'
+        fechaResolucion: null
+        totalValidaciones: 0
+        descripcion: Sin luz en toda la cuadra desde el mediodía.
+        magnitudAreaAfectada: CUADRA
+        tiempoInicioEstimado: '2026-10-26T12:00:00Z'
+        duracionInterrupcionHoras: null
+        idOperador: null
+        evidenciaUrl: https://example.supabase.co/storage/v1/object/sign/evidencias/2026/10/1024.jpg?token=abc123
+        esMio: true
+    ReporteEnAtencion:
+      value:
+        idReporte: 1024
+        codigoTrazabilidad: SR-2026-000124
+        idServicio: 1
+        tipoServicio: ENERGIA
+        tipoEvento: CORTE
+        estado: EN_ATENCION
+        severidad: ALTA
+        departamento: Cundinamarca
+        municipio: Bogotá D.C.
+        lat: 4.6097
+        lng: -74.0817
+        fechaCreacion: '2026-10-26T13:05:00Z'
+        fechaResolucion: null
+        totalValidaciones: 0
+        descripcion: Sin luz en toda la cuadra desde el mediodía.
+        magnitudAreaAfectada: CUADRA
+        tiempoInicioEstimado: '2026-10-26T12:00:00Z'
+        duracionInterrupcionHoras: null
+        idOperador: 3
+        evidenciaUrl: null
+        esMio: false
+    ReporteRestablecimientoReportado:
+      value:
+        idReporte: 1024
+        codigoTrazabilidad: SR-2026-000124
+        idServicio: 1
+        tipoServicio: ENERGIA
+        tipoEvento: CORTE
+        estado: RESTABLECIMIENTO_REPORTADO
+        severidad: ALTA
+        departamento: Cundinamarca
+        municipio: Bogotá D.C.
+        lat: 4.6097
+        lng: -74.0817
+        fechaCreacion: '2026-10-26T13:05:00Z'
+        fechaResolucion: null
+        totalValidaciones: 0
+        descripcion: Sin luz en toda la cuadra desde el mediodía.
+        magnitudAreaAfectada: CUADRA
+        tiempoInicioEstimado: '2026-10-26T12:00:00Z'
+        duracionInterrupcionHoras: null
+        idOperador: 3
+        evidenciaUrl: null
+        esMio: true
+
+  responses:
+    SolicitudInvalida:
+      description: Solicitud inválida.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example:
+            type: https://servired.example/problemas/validacion
+            title: Solicitud inválida
+            status: 400
+            detail: Uno o más campos no son válidos.
+            errores:
+              - { campo: lat, mensaje: debe estar entre -90 y 90 }
+    NoAutenticado:
+      description: Falta el JWT o no es válido.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example: { type: about:blank, title: No autenticado, status: 401 }
+    SinPermiso:
+      description: El rol del JWT no permite la operación.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example: { type: about:blank, title: Sin permiso, status: 403, detail: Se requiere el rol OPERADOR. }
+    NoEncontrado:
+      description: El recurso no existe.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example: { type: about:blank, title: No encontrado, status: 404, detail: No existe el reporte 1024. }
+    Conflicto:
+      description: El estado actual no permite la operación (o la validación ya existe).
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example:
+            type: https://servired.example/problemas/conflicto
+            title: Conflicto
+            status: 409
+            detail: El usuario ya validó este restablecimiento.
+    FueraDeRadio:
+      description: El validador está fuera del radio permitido alrededor del reporte.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example:
+            type: https://servired.example/problemas/fuera-de-radio
+            title: Fuera de radio
+            status: 422
+            detail: La validación debe hacerse a menos de 500 m del reporte.
+    EvidenciaMuyGrande:
+      description: La evidencia supera el tamaño máximo.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example: { type: about:blank, title: Evidencia muy grande, status: 413, detail: La foto debe pesar máximo 2 MB. }
+    DemasiadasSolicitudes:
+      description: Límite de tasa excedido (aplicado en el gateway).
+      headers:
+        Retry-After:
+          description: Segundos a esperar.
+          schema: { type: integer }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example: { type: about:blank, title: Demasiadas solicitudes, status: 429 }
+    ErrorInterno:
+      description: Error inesperado.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problema' }
+          example: { type: about:blank, title: Error interno, status: 500 }

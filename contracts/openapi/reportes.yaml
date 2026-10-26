@@ -1,0 +1,97 @@
+openapi: 3.0.3
+info:
+  title: SERVI·RED — Servicio Reportes
+  version: 0.1.0
+  description: |
+    Contrato del servicio Reportes (puerto 8081, solo red interna). Las rutas `/api/*` son las mismas
+    de la API pública (el gateway las enruta sin reescribir) y se toman de `servired-public.yaml`.
+    Las rutas `/internal/*` **no** las expone el gateway: solo las llama Moderación (timeout 2 s,
+    1 reintento).
+  contact:
+    name: Equipo SERVI·RED
+    url: https://github.com/ProyectoArquisoft/servired-infra
+servers:
+  - url: http://reportes:8081
+    description: Red interna de docker compose
+tags:
+  - name: Servicios
+    description: Catálogo de servicios públicos domiciliarios.
+  - name: Reportes
+    description: Reportes de corte, restablecimiento y validación comunitaria.
+  - name: Interno
+    description: Endpoints síncronos para Moderación. No expuestos por el gateway.
+security:
+  - bearerAuth: []
+
+paths:
+  /api/servicios:
+    $ref: 'servired-public.yaml#/paths/~1api~1servicios'
+  /api/reportes:
+    $ref: 'servired-public.yaml#/paths/~1api~1reportes'
+  /api/reportes/{id}:
+    $ref: 'servired-public.yaml#/paths/~1api~1reportes~1{id}'
+  /api/reportes/{id}/restablecimiento:
+    $ref: 'servired-public.yaml#/paths/~1api~1reportes~1{id}~1restablecimiento'
+  /api/reportes/{id}/validaciones:
+    $ref: 'servired-public.yaml#/paths/~1api~1reportes~1{id}~1validaciones'
+  /api/reportes/{id}/estado:
+    $ref: 'servired-public.yaml#/paths/~1api~1reportes~1{id}~1estado'
+
+  /internal/reportes/{id}:
+    get:
+      tags: [Interno]
+      operationId: consultarReporteInterno
+      summary: Verificar que un reporte exista (para Moderación)
+      description: |
+        Usado por Moderación al recibir un fraude con `idReporteRef`. Siempre responde `200`;
+        si el reporte no existe, `existe=false` y el resto de campos en `null`.
+        No devuelve datos del usuario que creó el reporte.
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+          example: 1024
+      responses:
+        '200':
+          description: Resultado de la consulta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReporteInterno'
+              examples:
+                existe:
+                  value: { existe: true, idServicio: 1, estado: ACTIVO, lat: 4.6097, lng: -74.0817 }
+                noExiste:
+                  value: { existe: false, idServicio: null, estado: null, lat: null, lng: null }
+        '500':
+          description: Error inesperado.
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'servired-public.yaml#/components/schemas/Problema'
+              example: { type: about:blank, title: Error interno, status: 500 }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT de Supabase, ya validado por el gateway y reenviado al servicio.
+  schemas:
+    ReporteInterno:
+      type: object
+      required: [existe, idServicio, estado, lat, lng]
+      properties:
+        existe: { type: boolean }
+        idServicio: { type: integer, format: int64, nullable: true }
+        estado:
+          # Mismos valores que EstadoReporte de servired-public.yaml; inline porque OAS 3.0 no
+          # permite combinar nullable con $ref.
+          type: string
+          nullable: true
+          enum: [ACTIVO, EN_ATENCION, RESTABLECIMIENTO_REPORTADO, RESTABLECIDO, CERRADO, null]
+        lat: { type: number, format: double, nullable: true }
+        lng: { type: number, format: double, nullable: true }

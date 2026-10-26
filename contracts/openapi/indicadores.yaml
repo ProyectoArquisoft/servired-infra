@@ -1,0 +1,106 @@
+openapi: 3.0.3
+info:
+  title: SERVI·RED — Servicio Indicadores
+  version: 0.1.0
+  description: |
+    Contrato del servicio Indicadores (puerto 8083, solo red interna). Las rutas `/api/*` son las
+    de la API pública (`servired-public.yaml`). La ruta `/internal/*` **no** la expone el gateway:
+    solo la llama Moderación (timeout 2 s, 1 reintento).
+
+    Indicadores se alimenta de los eventos de `contracts/events/` (cola `indicadores.events`).
+  contact:
+    name: Equipo SERVI·RED
+    url: https://github.com/ProyectoArquisoft/servired-infra
+servers:
+  - url: http://indicadores:8083
+    description: Red interna de docker compose
+tags:
+  - name: Indicadores
+    description: Indicadores de continuidad y datos abiertos.
+  - name: Interno
+    description: Endpoints síncronos para Moderación. No expuestos por el gateway.
+security:
+  - bearerAuth: []
+
+paths:
+  /api/indicadores:
+    $ref: 'servired-public.yaml#/paths/~1api~1indicadores'
+  /api/indicadores/export:
+    $ref: 'servired-public.yaml#/paths/~1api~1indicadores~1export'
+
+  /internal/indicadores/patrones:
+    get:
+      tags: [Interno]
+      operationId: consultarPatronesZona
+      summary: Patrón histórico de fraudes de una zona (para Moderación)
+      description: |
+        Resume los fraudes registrados para un servicio alrededor de un punto, para que Moderación
+        decida si aprueba o rechaza un reporte de fraude. Solo datos agregados, sin datos de usuario.
+      security: []
+      parameters:
+        - name: idServicio
+          in: query
+          required: true
+          schema: { type: integer, format: int64 }
+          example: 1
+        - name: lat
+          in: query
+          required: true
+          schema: { type: number, format: double, minimum: -90, maximum: 90 }
+          example: 4.5981
+        - name: lng
+          in: query
+          required: true
+          schema: { type: number, format: double, minimum: -180, maximum: 180 }
+          example: -74.0758
+      responses:
+        '200':
+          description: Patrón de la zona.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PatronZona'
+              example:
+                idServicio: 1
+                radioMetros: 1000
+                ventanaDias: 90
+                fraudesValidados: 4
+                fraudesRechazados: 1
+                cortesReportados: 17
+        '400':
+          description: Parámetros inválidos.
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'servired-public.yaml#/components/schemas/Problema'
+              example: { type: about:blank, title: Solicitud inválida, status: 400 }
+        '500':
+          description: Error inesperado.
+          content:
+            application/problem+json:
+              schema:
+                $ref: 'servired-public.yaml#/components/schemas/Problema'
+              example: { type: about:blank, title: Error interno, status: 500 }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT de Supabase, ya validado por el gateway y reenviado al servicio.
+  schemas:
+    PatronZona:
+      type: object
+      required: [idServicio, radioMetros, ventanaDias, fraudesValidados, fraudesRechazados, cortesReportados]
+      properties:
+        idServicio: { type: integer, format: int64 }
+        radioMetros:
+          type: integer
+          description: Radio usado alrededor del punto.
+        ventanaDias:
+          type: integer
+          description: Días hacia atrás considerados.
+        fraudesValidados: { type: integer, minimum: 0 }
+        fraudesRechazados: { type: integer, minimum: 0 }
+        cortesReportados: { type: integer, minimum: 0 }

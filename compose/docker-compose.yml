@@ -1,0 +1,22 @@
+# SERVI·RED — orquestación local / demo.
+# Uso (desde esta carpeta):
+#   docker compose --profile mock up      -> API simulada en http://localhost:4010
+# Los servicios de negocio, RabbitMQ y los perfiles local-db / tunnel / obs se agregan en H2+.
+
+name: servired
+
+services:
+  mock:
+    # Prism sirve la API pública con las respuestas de ejemplo del contrato.
+    image: stoplight/prism:5.14.2
+    profiles: [mock]
+    command: mock -h 0.0.0.0 -p 4010 /contracts/servired-public.yaml
+    ports:
+      - "4010:4010"
+    volumes:
+      - ../contracts/openapi:/contracts:ro
+    networks: [servired-net]
+
+networks:
+  servired-net:
+    name: servired-net
