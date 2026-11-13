@@ -51,7 +51,7 @@ Para verificar: `sh scripts/smoke-test.sh` o `.\scripts\smoke-test.ps1` (probar 
 
 ## Eventos
 
-Exchange `servired.events` (topic, durable). Los servicios publican con la routing key igual al nombre del evento (`reporte.creado`, `reporte.restablecido`, `validacion.registrada`, `fraude.validado`, `fraude.rechazado`). `compose/rabbitmq/definitions.json` precarga la cola `indicadores.events` con sus bindings y la cola de errores `indicadores.events.dlq` (vía `servired.dlx`). Debe coincidir con lo que declara Indicadores (mismos argumentos); si uno cambia, cambia el otro.
+Exchange `servired.events` (topic, durable). Los servicios publican con la routing key igual al nombre del evento (`reporte.creado`, `reporte.restablecido`, `validacion.registrada`, `fraude.validado`, `fraude.rechazado`). `compose/rabbitmq/definitions.json` se importa al arrancar (servicio `rabbitmq-init`) y deja creada la cola `indicadores.events` con sus bindings y la cola de errores `indicadores.events.dlq` (vía `servired.dlx`). Debe coincidir con lo que declara Indicadores (mismos argumentos); si uno cambia, cambia el otro.
 
 ## Reglas
 
