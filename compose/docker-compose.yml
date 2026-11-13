@@ -40,8 +40,6 @@ services:
       # Solo desde este computador: consola en http://localhost:15672
       - "127.0.0.1:15672:15672"
     volumes:
-      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/90-servired.conf:ro
-      - ./rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
       - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
@@ -49,6 +47,29 @@ services:
       timeout: 10s
       retries: 12
       start_period: 20s
+
+  rabbitmq-init:
+    # Importa exchanges, colas y bindings (definitions.json) por la API de administración y termina.
+    # No se usa load_definitions al arrancar porque, con él, RabbitMQ no crea el usuario de las variables.
+    image: curlimages/curl:8.11.1
+    profiles: [app]
+    restart: "no"
+    networks: [servired-net]
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+    volumes:
+      - ./rabbitmq/definitions.json:/definitions.json:ro
+    environment:
+      RABBITMQ_USER: ${RABBITMQ_USER:-servired}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-servired}
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        curl -fsS --retry 15 --retry-delay 3 --retry-connrefused
+        -u "$$RABBITMQ_USER:$$RABBITMQ_PASSWORD"
+        -H "content-type: application/json"
+        -X POST --data-binary @/definitions.json
+        http://rabbitmq:15672/api/definitions
 
   gateway:
     <<: *comun
@@ -75,6 +96,7 @@ services:
     expose: ["8081"]
     depends_on:
       rabbitmq: { condition: service_healthy }
+      rabbitmq-init: { condition: service_completed_successfully }
     environment:
       DB_URL: ${REPORTES_DB_URL:-}
       DB_USER: ${REPORTES_DB_USER:-svc_reportes}
@@ -95,6 +117,7 @@ services:
     expose: ["8082"]
     depends_on:
       rabbitmq: { condition: service_healthy }
+      rabbitmq-init: { condition: service_completed_successfully }
     # Sin variables de Supabase Auth: Moderación no valida JWT (anonimato).
     environment:
       DB_URL: ${MODERACION_DB_URL:-}
@@ -113,6 +136,7 @@ services:
     expose: ["8083"]
     depends_on:
       rabbitmq: { condition: service_healthy }
+      rabbitmq-init: { condition: service_completed_successfully }
     environment:
       DB_URL: ${INDICADORES_DB_URL:-}
       DB_USER: ${INDICADORES_DB_USER:-svc_indicadores}
