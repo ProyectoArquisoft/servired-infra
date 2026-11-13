@@ -1,9 +1,20 @@
-# SERVI·RED — orquestación local / demo.
-# Uso (desde esta carpeta):
-#   docker compose --profile mock up      -> API simulada en http://localhost:4010
-# Los servicios de negocio, RabbitMQ y los perfiles local-db / tunnel / obs se agregan en H2+.
+# SERVI·RED — orquestación local / demo. Ejecutar desde esta carpeta (compose/).
+#
+#   docker compose --profile mock up                      API simulada en http://localhost:4010
+#   docker compose --profile app up                       RabbitMQ + gateway + 3 servicios (imágenes de GHCR)
+#   docker compose --profile app --profile tunnel up      ... y URL pública HTTPS para la app (demo)
+#   docker compose --profile app --profile local-db up    ... con Postgres local en vez de Supabase
+#
+# Para construir desde los repos hermanos en vez de bajar imágenes, agrega el override dev:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile app up --build
+#
+# Las variables salen de compose/.env (copia de .env.example; nunca se commitea).
 
 name: servired
+
+x-comun: &comun
+  restart: unless-stopped
+  networks: [servired-net]
 
 services:
   mock:
@@ -17,6 +28,137 @@ services:
       - ../contracts/openapi:/contracts:ro
     networks: [servired-net]
 
+  rabbitmq:
+    <<: *comun
+    image: rabbitmq:4-management
+    profiles: [app]
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-servired}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-servired}
+    ports:
+      # Solo desde este computador: consola en http://localhost:15672
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/90-servired.conf:ro
+      - ./rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  gateway:
+    <<: *comun
+    image: ${IMAGE_PREFIX:-ghcr.io/proyectoarquisoft/servired-}gateway:${TAG:-latest}
+    profiles: [app]
+    # Único servicio expuesto al exterior (y al túnel).
+    ports:
+      - "8080:8080"
+    environment:
+      REPORTES_BASE_URL: http://reportes:8081
+      MODERACION_BASE_URL: http://moderacion:8082
+      INDICADORES_BASE_URL: http://indicadores:8083
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_JWKS_URL: ${SUPABASE_JWKS_URL:-}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
+      RATE_LIMIT_FRAUDES_POR_MINUTO: ${RATE_LIMIT_FRAUDES_POR_MINUTO:-5}
+      # true solo cuando se usa el perfil tunnel (CF-Connecting-IP es falsificable sin túnel).
+      GATEWAY_CONFIAR_CF_IP: ${GATEWAY_CONFIAR_CF_IP:-false}
+
+  reportes:
+    <<: *comun
+    image: ${IMAGE_PREFIX:-ghcr.io/proyectoarquisoft/servired-}reportes:${TAG:-latest}
+    profiles: [app]
+    expose: ["8081"]
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+    environment:
+      DB_URL: ${REPORTES_DB_URL:-}
+      DB_USER: ${REPORTES_DB_USER:-svc_reportes}
+      DB_PASSWORD: ${REPORTES_DB_PASSWORD:-}
+      DB_SCHEMA: reportes
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-servired}:${RABBITMQ_PASSWORD:-servired}@rabbitmq:5672
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_JWKS_URL: ${SUPABASE_JWKS_URL:-}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
+      # Solo Reportes tiene esta llave (escribe en Storage).
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-evidencias}
+
+  moderacion:
+    <<: *comun
+    image: ${IMAGE_PREFIX:-ghcr.io/proyectoarquisoft/servired-}moderacion:${TAG:-latest}
+    profiles: [app]
+    expose: ["8082"]
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+    # Sin variables de Supabase Auth: Moderación no valida JWT (anonimato).
+    environment:
+      DB_URL: ${MODERACION_DB_URL:-}
+      DB_USER: ${MODERACION_DB_USER:-svc_moderacion}
+      DB_PASSWORD: ${MODERACION_DB_PASSWORD:-}
+      DB_SCHEMA: moderacion
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-servired}:${RABBITMQ_PASSWORD:-servired}@rabbitmq:5672
+      REPORTES_BASE_URL: http://reportes:8081
+      INDICADORES_BASE_URL: http://indicadores:8083
+      SYNC_TIMEOUT_MS: ${SYNC_TIMEOUT_MS:-2000}
+
+  indicadores:
+    <<: *comun
+    image: ${IMAGE_PREFIX:-ghcr.io/proyectoarquisoft/servired-}indicadores:${TAG:-latest}
+    profiles: [app]
+    expose: ["8083"]
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+    environment:
+      DB_URL: ${INDICADORES_DB_URL:-}
+      DB_USER: ${INDICADORES_DB_USER:-svc_indicadores}
+      DB_PASSWORD: ${INDICADORES_DB_PASSWORD:-}
+      DB_SCHEMA: indicadores
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-servired}:${RABBITMQ_PASSWORD:-servired}@rabbitmq:5672
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_JWKS_URL: ${SUPABASE_JWKS_URL:-}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
+
+  tunnel:
+    <<: *comun
+    # Quick tunnel de Cloudflare: la URL https://<algo>.trycloudflare.com aparece en los logs.
+    # Se usa junto con el perfil app (el gateway debe estar arriba).
+    image: cloudflare/cloudflared:latest
+    profiles: [tunnel]
+    command: tunnel --no-autoupdate --url http://gateway:8080
+
+  db:
+    # Alternativa sin internet a Supabase: un Postgres con los 3 esquemas y 3 roles.
+    # Úsalo con REPORTES_DB_URL=jdbc:postgresql://db:5432/postgres (ver .env.example).
+    image: postgis/postgis:16-3.4
+    profiles: [local-db]
+    restart: unless-stopped
+    networks: [servired-net]
+    environment:
+      POSTGRES_PASSWORD: ${LOCAL_DB_ADMIN_PASSWORD:-postgres}
+      SVC_REPORTES_PASSWORD: ${REPORTES_DB_PASSWORD:-}
+      SVC_MODERACION_PASSWORD: ${MODERACION_DB_PASSWORD:-}
+      SVC_INDICADORES_PASSWORD: ${INDICADORES_DB_PASSWORD:-}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./local-db/init.sh:/docker-entrypoint-initdb.d/10-init.sh:ro
+      - ../supabase:/sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
 networks:
   servired-net:
     name: servired-net
+
+volumes:
+  rabbitmq-data:
+  pgdata:

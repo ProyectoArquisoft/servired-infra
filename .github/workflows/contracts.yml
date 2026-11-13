@@ -2,10 +2,10 @@ name: contracts
 
 on:
   pull_request:
-    paths: ["contracts/**", ".spectral.yaml", ".github/workflows/contracts.yml"]
+    paths: ["contracts/**", "compose/**", "supabase/**", ".spectral.yaml", ".github/workflows/contracts.yml"]
   push:
     branches: [main]
-    paths: ["contracts/**", ".spectral.yaml", ".github/workflows/contracts.yml"]
+    paths: ["contracts/**", "compose/**", "supabase/**", ".spectral.yaml", ".github/workflows/contracts.yml"]
 
 jobs:
   openapi:
@@ -45,3 +45,11 @@ jobs:
               echo "::error file=contracts/events/$ex::debería ser inválido"; exit 1
             fi
           done
+
+  compose:
+    name: Validar compose y definiciones de RabbitMQ
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f compose/docker-compose.yml --profile mock --profile app --profile tunnel --profile local-db config -q
+      - run: python3 -m json.tool compose/rabbitmq/definitions.json > /dev/null

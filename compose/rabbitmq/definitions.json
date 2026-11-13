@@ -1,0 +1,20 @@
+{
+  "vhosts": [{ "name": "/" }],
+  "exchanges": [
+    { "name": "servired.events", "vhost": "/", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "servired.dlx", "vhost": "/", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": {} }
+  ],
+  "queues": [
+    {
+      "name": "indicadores.events", "vhost": "/", "durable": true, "auto_delete": false,
+      "arguments": { "x-dead-letter-exchange": "servired.dlx", "x-dead-letter-routing-key": "indicadores.events" }
+    },
+    { "name": "indicadores.events.dlq", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {} }
+  ],
+  "bindings": [
+    { "source": "servired.events", "vhost": "/", "destination": "indicadores.events", "destination_type": "queue", "routing_key": "reporte.*", "arguments": {} },
+    { "source": "servired.events", "vhost": "/", "destination": "indicadores.events", "destination_type": "queue", "routing_key": "validacion.*", "arguments": {} },
+    { "source": "servired.events", "vhost": "/", "destination": "indicadores.events", "destination_type": "queue", "routing_key": "fraude.*", "arguments": {} },
+    { "source": "servired.dlx", "vhost": "/", "destination": "indicadores.events.dlq", "destination_type": "queue", "routing_key": "indicadores.events", "arguments": {} }
+  ]
+}

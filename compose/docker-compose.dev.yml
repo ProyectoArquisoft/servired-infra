@@ -1,0 +1,21 @@
+# Override de desarrollo: construye las imágenes desde los repos clonados lado a lado
+#   <carpeta>/servired-infra, <carpeta>/servired-gateway, ...
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile app up --build
+# y publica los puertos de los servicios para probarlos directamente.
+
+services:
+  gateway:
+    build: ../../servired-gateway
+    image: servired-gateway:dev
+  reportes:
+    build: ../../servired-reportes
+    image: servired-reportes:dev
+    ports: ["8081:8081"]
+  moderacion:
+    build: ../../servired-moderacion
+    image: servired-moderacion:dev
+    ports: ["8082:8082"]
+  indicadores:
+    build: ../../servired-indicadores
+    image: servired-indicadores:dev
+    ports: ["8083:8083"]
